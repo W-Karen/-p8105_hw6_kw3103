@@ -1,0 +1,300 @@
+---
+title: "Homework 6"
+author: "Kairui Wang"
+date: "2023-11-29"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(viridis)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+
+Load packages
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(modelr)
+library(broom)
+```
+
+# Problem 1
+
+In the data cleaning code below we create a `city_state` variable, change `victim_age` to numeric, modifiy victim_race to have categories white and non-white, with white as the reference category, and create a `resolution` variable indicating whether the homicide is solved. Lastly, we filtered out the following cities: Tulsa, AL; Dallas, TX; Phoenix, AZ; and Kansas City, MO; and we retained only the variables `city_state`, `resolution`, `victim_age`, `victim_sex`, and `victim_race`.
+
+```{r q1_data_cleaning}
+homicide_df = 
+  read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) |> 
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1)
+  ) |> 
+  filter(victim_race %in% c("White", "Black")) |> 
+  filter(!(city_state %in% c("Tulsa, AL", "Dallas, TX", "Phoenix, AZ", "Kansas City, MO"))) |> 
+  select(city_state, resolution, victim_age, victim_sex, victim_race)
+```
+
+Next we fit a logistic regression model using only data from Baltimore, MD. We model `resolved` as the outcome and `victim_age`, `victim_sex`, and `victim_race` as predictors. We save the output as `baltimore_glm` so that we can apply `broom::tidy` to this object and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing non-white victims to white victims.
+
+```{r q1_glm_baltimore}
+baltimore_glm = 
+  filter(homicide_df, city_state == "Baltimore, MD") |> 
+  glm(resolution ~ victim_age + victim_sex + victim_race, family = binomial(), data = _)
+
+baltimore_glm |> 
+  broom::tidy() |> 
+  mutate(
+    OR = exp(estimate), 
+    OR_CI_upper = exp(estimate + 1.96 * std.error),
+    OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
+  filter(term == "victim_sexMale") |> 
+  select(OR, OR_CI_lower, OR_CI_upper) |>
+  knitr::kable(digits = 3)
+```
+
+Below, by incorporating `nest()`, `map()`, and `unnest()` into the preceding Baltimore-specific code, we fit a model for each of the cities, and extract the adjusted odds ratio (and CI) for solving homicides comparing non-white victims to white victims. We show the first 5 rows of the resulting dataframe of model results.
+
+```{r q1_glm_all_cities}
+model_results = 
+  homicide_df |> 
+  nest(data = -city_state) |> 
+  mutate(
+    models = map(data, \(df) glm(resolution ~ victim_age + victim_sex + victim_race, 
+                             family = binomial(), data = df)),
+    tidy_models = map(models, broom::tidy)) |> 
+  select(-models, -data) |> 
+  unnest(cols = tidy_models) |> 
+  mutate(
+    OR = exp(estimate), 
+    OR_CI_upper = exp(estimate + 1.96 * std.error),
+    OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
+  filter(term == "victim_sexMale") |> 
+  select(city_state, OR, OR_CI_lower, OR_CI_upper)
+
+model_results |>
+  slice(1:5) |> 
+  knitr::kable(digits = 3)
+```
+
+Below we generate a plot of the estimated ORs and CIs for each city, ordered by magnitude of the OR from smallest to largest. From this plot we see that most cities have odds ratios that are smaller than 1, suggesting that crimes with male victims have smaller odds of resolution compared to crimes with female victims after adjusting for victim age and race. This disparity is strongest in New yrok. In roughly half of these cities, confidence intervals are narrow and do not contain 1, suggesting a significant difference in resolution rates by sex after adjustment for victim age and race. 
+
+```{r q1_plot}
+model_results |> 
+  mutate(city_state = fct_reorder(city_state, OR)) |> 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = OR_CI_lower, ymax = OR_CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+# Problem 2
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+* Set seed for reproducibility
+
+```{r}
+set.seed(123)
+```
+
+* Function to perform bootstrap and calculate r^2 and log(β1 * β2)
+
+```{r}
+bootstrap_regression <- function(data) {
+  # Sample with replacement
+  bootstrap_sample <- sample_n(data, size = nrow(data), replace = TRUE)
+  
+  # Fit linear regression model
+  model <- lm(tmax ~ tmin + prcp, data = bootstrap_sample)
+  
+  # Extract r^2 and coefficients
+  r_squared <- glance(model)$r.squared
+  beta1_beta2 <- log(tidy(model)$estimate[2] * tidy(model)$estimate[3])
+  
+  return(c(r_squared, beta1_beta2))
+}
+```
+
+* Number of bootstrap samples
+
+```{r}
+num_bootstraps <- 5000
+```
+
+* Perform bootstrap and store results
+
+```{r}
+bootstrap_results <- replicate(num_bootstraps, bootstrap_regression(weather_df))
+```
+
+* Convert results to data frame
+
+```{r}
+bootstrap_df <- as.data.frame(t(bootstrap_results))
+colnames(bootstrap_df) <- c("r_squared", "log_beta1_beta2")
+```
+
+* Plot the distributions
+
+```{r}
+par(mfrow = c(1, 2))
+hist(bootstrap_df$r_squared, main = "Distribution of r^2", xlab = "r^2")
+hist(bootstrap_df$log_beta1_beta2, main = "Distribution of log(β1 * β2)", xlab = "log(β1 * β2)")
+```
+
+
+
+* Calculate 95% confidence intervals
+
+```{r}
+conf_interval_r_squared <- quantile(bootstrap_df$r_squared, c(0.025, 0.975), na.rm = TRUE)
+conf_interval_log_beta1_beta2 <- quantile(bootstrap_df$log_beta1_beta2, c(0.025, 0.975), na.rm = TRUE)
+
+conf_interval_r_squared
+conf_interval_log_beta1_beta2
+```
+
+
+# Problem 3
+
+* Load and clean data
+
+```{r}
+data <- read.csv("data/birthweight.csv")
+
+head(data)
+
+str(data)
+summary(data)
+
+bwt_df <- data |> 
+  mutate(babysex = as.factor(babysex),
+         frace = as.factor(frace),
+         malform = as.factor(malform),
+         mrace = as.factor(mrace)) |> 
+  janitor::clean_names() |> 
+  select(bwt,everything())
+
+```
+
+```{r}
+sum(is.na(bwt_df))
+```
+
+* Fit a full model
+
+```{r}
+full_model <- lm(bwt ~., data = bwt_df)
+
+broom::tidy(full_model) |>   knitr::kable()
+```
+
+* Select variables in the full model
+
+```{r}
+stepwise_model <- MASS::stepAIC(full_model, direction = "backward", trace = FALSE)
+
+broom::tidy(stepwise_model) %>%  knitr::kable()
+```
+
+As is shown in the stepwise_model result, the selected predictors are : babysex, bhead, blength, delwt, fincome, gaweeks, mheight, mrace, parity, ppwt, smoken.
+
+The residual against fitted value plot is shown below.
+
+* Plot residuals vs. fitted values
+
+```{r}
+bwt_df |> 
+  add_predictions(stepwise_model) |>
+  add_residuals(stepwise_model) |> 
+  ggplot(aes(x = pred, y = resid)) + geom_point() +
+  labs(title = "Residuals vs Fitted Values ", ) + xlab("Fitted Value") + ylab("Residuals")
+```
+
+```{r}
+cv_df = 
+  crossv_mc(bwt_df, 100) |> 
+  mutate(
+    train = map(train, as_tibble), 
+    test = map(test, as_tibble))
+```
+
+* Compare the 3 models – mean rmse
+
+```{r}
+cv_df |>  
+  mutate(
+    model_1  = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + 
+    gaweeks + mheight + mrace + parity + ppwt + smoken, data = .x)),
+    model_2  = map(train, ~lm(bwt ~ gaweeks + blength, data = .x)),
+    model_3  = map(train, ~lm(bwt ~ bhead*blength*babysex, data = .x))) |> 
+  mutate(
+    rmse_model_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_2    = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
+    rmse_3 = map2_dbl(model_3, test, ~rmse(model = .x, data = .y))) |> 
+  summarize(
+    avg_rmse_model_1 = mean(rmse_model_1),
+    avg_rmse_model_2 = mean(rmse_2),
+    avg_rmse_model_3  = mean(rmse_3)
+  ) %>% 
+  knitr::kable()
+```
+
+```{r}
+cv_df |>  
+  mutate(
+    model_1  = map(train, ~lm( bwt ~ babysex + bhead + blength + delwt + fincome + 
+    gaweeks + mheight + mrace + parity + ppwt + smoken, data = .x)),
+    model_2  = map(train, ~lm(bwt ~ gaweeks + blength, data = .x)),
+    model_3  = map(train, ~lm(bwt ~ bhead*blength*babysex, data = .x))) |> 
+  mutate(
+    rmse_model_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
+    rmse_model_2    = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
+    rmse_model_3 = map2_dbl(model_3, test, ~rmse(model = .x, data = .y))) |> 
+  select(starts_with("rmse")) %>%  
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin(aes(fill = model))
+```
+
+According to the table and violin plot above, we can see that model_1 has the lowest mean RMSE. The main effect model (model_2) has the highest RMSE. The interaction model (model_3) has RMSE slightly higher than my model.
