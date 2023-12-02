@@ -179,7 +179,6 @@ hist(bootstrap_df$log_beta1_beta2, main = "Distribution of log(β1 * β2)", xlab
 ```
 
 
-
 * Calculate 95% confidence intervals
 
 ```{r}
@@ -213,6 +212,8 @@ bwt_df <- data |>
 
 ```
 
+* Explore other variables as needed
+
 ```{r}
 sum(is.na(bwt_df))
 ```
@@ -222,7 +223,8 @@ sum(is.na(bwt_df))
 ```{r}
 full_model <- lm(bwt ~., data = bwt_df)
 
-broom::tidy(full_model) |>   knitr::kable()
+broom::tidy(full_model) |>
+  knitr::kable()
 ```
 
 * Select variables in the full model
@@ -230,7 +232,8 @@ broom::tidy(full_model) |>   knitr::kable()
 ```{r}
 stepwise_model <- MASS::stepAIC(full_model, direction = "backward", trace = FALSE)
 
-broom::tidy(stepwise_model) %>%  knitr::kable()
+broom::tidy(stepwise_model) |> 
+  knitr::kable()
 ```
 
 As is shown in the stepwise_model result, the selected predictors are : babysex, bhead, blength, delwt, fincome, gaweeks, mheight, mrace, parity, ppwt, smoken.
@@ -272,7 +275,7 @@ cv_df |>
     avg_rmse_model_1 = mean(rmse_model_1),
     avg_rmse_model_2 = mean(rmse_2),
     avg_rmse_model_3  = mean(rmse_3)
-  ) %>% 
+  ) |>  
   knitr::kable()
 ```
 
@@ -287,13 +290,13 @@ cv_df |>
     rmse_model_1 = map2_dbl(model_1, test, ~rmse(model = .x, data = .y)),
     rmse_model_2    = map2_dbl(model_2, test, ~rmse(model = .x, data = .y)),
     rmse_model_3 = map2_dbl(model_3, test, ~rmse(model = .x, data = .y))) |> 
-  select(starts_with("rmse")) %>%  
+  select(starts_with("rmse")) |>   
   pivot_longer(
     everything(),
     names_to = "model", 
     values_to = "rmse",
-    names_prefix = "rmse_") %>% 
-  mutate(model = fct_inorder(model)) %>% 
+    names_prefix = "rmse_") |>  
+  mutate(model = fct_inorder(model)) |>  
   ggplot(aes(x = model, y = rmse)) + geom_violin(aes(fill = model))
 ```
 
